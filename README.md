@@ -6,15 +6,11 @@
 > **BU Ultrafast, Browser Use Cloud's own hosted agent, is live on every plan.** Set `model: "bu-ultrafast"` to use it.
 > **[Learn more](https://browser-use.com/ultrafast?utm_source=github&utm_medium=readme&utm_campaign=jev-ultrafast)** · **[Open Browser Use Cloud](https://cloud.browser-use.com?utm_source=github&utm_medium=readme&utm_campaign=jev-ultrafast)**
 
-**A browser agent with a dynamic, indexed action space.**
+**An end-to-end website tester with a dynamic, indexed action space.**
 
-Give it one goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an element. A small LLM writes text only when the operation is `TYPE_TEXT`.
+Enter a website URL and one testing goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an observed element. A small LLM writes text only when the operation is `TYPE_TEXT`, while the inspector records each action and its observed result.
 
-**Zürich → London on Google Flights in 7.1 seconds.** One natural-language goal, actual text generation, and loading waits included.
-
-<a href="docs/demo.mp4"><img src="docs/demo.gif" alt="A real Google Flights search at 1× speed, with generated city names and dynamic operation/target decisions" width="100%" /></a>
-
-[Watch the MP4](docs/demo.mp4) · [Measurements](docs/performance.md) · [Read the loop](jev_ultrafast/agent.py)
+[Read the loop](jev_ultrafast/agent.py) · [Historical measurements](docs/performance.md)
 
 ## The action space
 
@@ -61,11 +57,13 @@ cp .env.example .env
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766** and click **Start demo → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+Open **http://127.0.0.1:8766**, enter the URL of the website to test, describe the end-to-end flow or bug hunt, and click **Start test → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+
+Every **Start test** creates a separate `artifacts/jev-decisions-<timestamp>.log` file. Each Jev response is written immediately as `Decision N - <selected element>`, followed by its input/output token counts, cumulative counts, and structured JSON output. The same per-request token counts are printed in the server terminal.
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
-`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The current demo uses `inception/mercury-2.5` with reasoning disabled. Gemini, GLM, and DeepSeek can also use the OpenAI-compatible text helper; configure the appropriate model, endpoint, and reasoning setting.
+`TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The sample configuration uses `google/gemma-4-31b-it:free` with reasoning disabled; `inception/mercury-2.5`, GLM, and DeepSeek can also use the OpenAI-compatible text helper when configured with the appropriate model and endpoint.
 
 ## Use the library
 
@@ -73,9 +71,9 @@ Chrome connects through [Browser Harness](https://github.com/browser-use/browser
 from jev_ultrafast import Agent
 
 with Agent(
-    "https://www.google.com/travel/flights?hl=en",
-    "Find one-way flights from Zurich to London on September 20, 2026, "
-    "for one adult in economy. Stop when matching flight options are visible.",
+    "http://127.0.0.1:8000/",
+    "Test the login flow end to end using clearly synthetic data. "
+    "Stop when the authenticated page is visible or a functional bug blocks progress.",
 ) as agent:
     for state in agent.run():
         print(state["elapsed_ms"], state["status"])
@@ -85,11 +83,9 @@ Run with `uv run --env-file .env python your_script.py`. The same policy can run
 
 ```bash
 uv run --env-file .env python examples/run.py \
-  --url https://en.wikipedia.org/wiki/Main_Page \
-  --goal 'Find and open the Wikipedia article about Gödel’s incompleteness theorems.'
+  --url http://127.0.0.1:8000/ \
+  --goal 'Test the primary user flow end to end and stop at the first functional bug.'
 ```
-
-`uv run --env-file .env python examples/flights.py --keep-open` performs the flight search, checks the actual route/date/results, and saves its trace. It does not select or book a flight.
 
 ## Why it moves
 
@@ -113,11 +109,11 @@ Every executed target is resolved from an observed node. The executor rechecks p
 | [browser.py](jev_ultrafast/browser.py) | Browser connection, current geometry, execution |
 | [model.py](jev_ultrafast/model.py) | Dynamic operation/target heads and text generation |
 | [questions.py](jev_ultrafast/questions.py) | Model instructions |
-| [demo.py](jev_ultrafast/demo.py) | Local inspector |
+| [demo.py](jev_ultrafast/demo.py) | Local end-to-end test inspector |
 
 ## Evidence and limits
 
-The current video is a **7,073 ms** Google Flights run. Timing starts after initial page observation and includes model calls, generated text, browser work, stale decisions, and loading waits. A fresh independent check verifies the one-way setting, Zürich, London, September 20, 2026, and visible flight options. The video plays at 1×, with no opening hold and a 0.5-second final hold.
+The archived benchmark video is a **7,073 ms** Google Flights run from the earlier general-purpose demo. Timing starts after initial page observation and includes model calls, generated text, browser work, stale decisions, and loading waits. A fresh independent check verified the route, date, and visible results. The current UI is dedicated to end-to-end software testing and accepts an explicit starting URL instead of preset scenarios.
 
 In six alternating runs with identical models and settings, both versions passed **3/3**. Median task time went from **9.450 s → 7.092 s**, a **25% reduction**; median browser protocol calls went from **1,092 → 101**. This is three repeats of one task on one browser profile, not a general reliability benchmark.
 

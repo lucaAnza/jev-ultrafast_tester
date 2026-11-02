@@ -10,6 +10,7 @@ import pytest
 from jev_ultrafast import agent as loop
 from jev_ultrafast import model
 from jev_ultrafast.browser import StalePage, browser_operation, fingerprint
+from jev_ultrafast.demo import start_url
 
 
 def page():
@@ -43,6 +44,17 @@ def decision(action="e1"):
         "latency_ms": 10,
         "usage": {},
     }
+
+
+@pytest.mark.parametrize("url", ["https://example.test/path", "http://127.0.0.1:8000/"])
+def test_start_url_accepts_websites(url):
+    assert start_url(f"  {url}  ") == url
+
+
+@pytest.mark.parametrize("url", ["", "example.test", "file:///tmp/page.html", "javascript:alert(1)"])
+def test_start_url_rejects_non_web_urls(url):
+    with pytest.raises(ValueError, match="valid http"):
+        start_url(url)
 
 
 @pytest.mark.parametrize("mutation", ["unknown", "nan", "missing", "negative", "non_max", "confidence"])
@@ -151,6 +163,20 @@ def test_quoted_task_text_still_uses_the_llm(monkeypatch):
     assert sent["goal"] == 'Fly from "Zurich" to London'
 
 
+def test_text_helper_can_generate_synthetic_values_when_authorized(monkeypatch):
+    monkeypatch.setenv("TEXT_MODEL_API_KEY", "test")
+    post = Mock(return_value={"choices": [{"message": {"content": '{"text":"tester@example.test"}'}}]})
+    monkeypatch.setattr(model, "post_json", post)
+    context = {
+        "goal": "Test login using synthetic test data",
+        "field": {"label": "Email", "role": "textbox", "value": ""},
+    }
+
+    assert model.field_text(context)[0] == "tester@example.test"
+    system_prompt = post.call_args.args[2]["messages"][0]["content"]
+    assert "synthetic test data" in system_prompt
+
+
 def test_missing_text_credential_stops_before_guessing(monkeypatch):
     monkeypatch.delenv("TEXT_MODEL_API_KEY", raising=False)
     with pytest.raises(ValueError, match="TEXT_MODEL_API_KEY"):
@@ -161,6 +187,7 @@ def test_missing_text_credential_stops_before_guessing(monkeypatch):
 def runner():
     a = loop.Agent.__new__(loop.Agent)
     a.screenshots = False
+    a.record_dir = None
     a.pending_text = None
     p = page()
     a.state = {
@@ -237,6 +264,43 @@ def test_observation_is_one_atomic_browser_read(monkeypatch):
     assert actual["actions"] == p["actions"]
     assert cdp.call_count == 1
     assert cdp.call_args.args[0] == "Runtime.evaluate"
+
+
+def test_optional_screenshot_timeout_preserves_observed_state(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    def cdp(method, **params):
+        if method == "Runtime.evaluate":
+            return {"result": {"value": page()}}
+        assert method == "Page.captureScreenshot"
+        assert params["_response_timeout"] == browser.SCREENSHOT_IPC_RESPONSE_TIMEOUT_SECONDS
+        raise TimeoutError("Page.captureScreenshot timed out")
+
+    monkeypatch.setattr(browser, "cdp", cdp)
+    actual = browser_operation({"operation": "observe", "session": "test", "screenshot": True})
+
+    assert actual["actions"] == page()["actions"]
+    assert actual["screenshot"] is None
+
+
+def test_recording_requires_a_screenshot(monkeypatch):
+    import jev_ultrafast.browser as browser
+
+    def cdp(method, **_params):
+        if method == "Runtime.evaluate":
+            return {"result": {"value": page()}}
+        raise TimeoutError("Page.captureScreenshot timed out")
+
+    monkeypatch.setattr(browser, "cdp", cdp)
+    with pytest.raises(TimeoutError, match="captureScreenshot"):
+        browser_operation(
+            {
+                "operation": "observe",
+                "session": "test",
+                "screenshot": True,
+                "screenshot_required": True,
+            }
+        )
 
 
 def test_executor_rejects_a_stale_page_before_browser_input(monkeypatch):

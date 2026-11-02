@@ -1,10 +1,11 @@
-"""Loopback-only inspector for the Jev browser agent."""
+"""Loopback-only inspector for end-to-end website testing."""
 
 import atexit
 import json
 import os
 import secrets
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -41,28 +42,34 @@ def close_browser():
         AGENT = None
 
 
+def start_url(value):
+    url = value.strip() if isinstance(value, str) else ""
+    parsed = urlparse(url)
+    if len(url) > 2048 or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Enter a valid http:// or https:// website URL")
+    return url
+
+
 def command(name, body):
     global AGENT
     if name == "reset":
-        scenario = body.get("scenario", "flights")
-        if scenario not in {"travel", "research", "flights"}:
-            raise ValueError("Unknown demo scenario")
+        url = start_url(body.get("url", ""))
+        print(f"Starting test for {url}", flush=True)
         goal = body.get("goal", "").strip()
         if not goal or len(goal) > 2000:
             raise ValueError("Enter 1–2,000 characters")
         close_browser()
+        run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         AGENT = Agent(
-            "https://www.google.com/travel/flights?hl=en"
-            if scenario == "flights"
-            else f"{ORIGIN}/fixture.html?scenario={scenario}",
+            url,
             goal,
+            decision_log=Path.cwd() / "artifacts" / f"jev-decisions-{run_id}.log",
             screenshots=True,
             record_dir=Path.cwd() / "artifacts" / "frames" if body.get("record") else None,
         )
-        AGENT.state["scenario"] = scenario
     else:
         if AGENT is None:
-            raise ValueError("Start a demo first")
+            raise ValueError("Start a test first")
         AGENT.command(name, body)
     return response_state()
 
@@ -85,15 +92,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             with LOCK:
                 return self.send(200, json.dumps(response_state()))
-        if path == "/demo.mp4":
-            video = ROOT.parent / "docs" / "demo.mp4"
-            if video.exists():
-                return self.send(200, video.read_bytes(), "video/mp4")
         files = {
             "/": ("index.html", "text/html"),
             "/app.js": ("app.js", "text/javascript"),
             "/style.css": ("style.css", "text/css"),
-            "/fixture.html": ("fixture.html", "text/html"),
         }
         if path not in files:
             return self.send(404, "Not found", "text/plain")
@@ -120,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, RuntimeError, TimeoutError) as error:
             self.send(400, json.dumps({"error": str(error)}))
         except Exception:
-            self.send(500, json.dumps({"error": "Local demo failed; no automatic retry. Reset to recover."}))
+            self.send(500, json.dumps({"error": "Local test failed; no automatic retry. Reset to recover."}))
         finally:
             LOCK.release()
 
@@ -132,7 +134,7 @@ def main():
     load_environment()
     atexit.register(close_browser)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Jev Ultrafast: {ORIGIN}", flush=True)
+    print(f"Jev Ultrafast tester: {ORIGIN}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="demo-token" content="__TOKEN__" />
-    <title>Jev Ultrafast · Browser Use</title>
+    <title>Jev Ultrafast · End-to-end testing</title>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link rel="stylesheet" href="/style.css" />
   </head>
@@ -18,36 +18,45 @@
     <main>
       <section class="intro">
         <div>
-          <p class="eyebrow">A BROWSER THAT CHOOSES</p>
-          <h1>Every page is a set of possibilities.</h1>
+          <p class="eyebrow">END-TO-END TESTING · BUG HUNTING</p>
+          <h1>Test a website through its real interface.</h1>
           <p>
-            Jev picks the next action. A small language model handles the words.
-            <a href="/demo.mp4" target="_blank" rel="noopener">Watch the real Google Flights run ↗</a>
+            Give Jev a starting URL and a testing goal. It explores the visible
+            interface and records every action and observed result.
           </p>
         </div>
         <div class="model-tag">jev-latest <span>+ text helper</span></div>
       </section>
       <form id="task-form">
-        <div class="task-label">
-          <label for="goal">Give it a task</label
-          ><select id="scenario" name="scenario" aria-label="Demo scenario">
-            <option value="flights">Google Flights · real web</option>
-            <option value="travel">Travel planner · fixture</option>
-            <option value="research">Reading room · fixture</option>
-          </select>
-        </div>
+        <label class="task-field" for="start-url">
+          <span>Website URL</span>
+          <input
+            id="start-url"
+            name="url"
+            type="url"
+            placeholder="https://example.com"
+            autocomplete="url"
+            required
+          />
+        </label>
+        <label class="task-field" for="goal"><span>Give it a task</span></label>
         <div class="task-row">
-          <textarea id="goal" name="goal" rows="5">
-Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.</textarea
+          <textarea
+            id="goal"
+            name="goal"
+            rows="5"
+            placeholder="Describe the end-to-end flow to test and what outcome to verify."
+            required
+          ></textarea
           ><button type="submit" id="start" class="primary">
-            Start demo <span>↗</span>
+            Start test <span>↗</span>
           </button>
         </div>
       </form>
       <div class="toolbar">
         <div class="status">
           <span class="dot" id="status-dot"></span
-          ><span id="status" role="status">Ready to explore</span>
+          ><span id="status" role="status">Ready to test</span>
         </div>
         <div class="controls"><label class="overlay-control"><input name="pace" id="pace" type="checkbox"> Slow motion</label>
           <label class="overlay-control"
@@ -64,14 +73,14 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
         <div class="browser-panel">
           <div class="browser-bar">
             <div class="traffic"><b></b><b></b><b></b></div>
-            <span id="url">Local demo browser</span
+            <span id="url">Test browser</span
             ><span class="live">LIVE</span>
           </div>
           <div class="viewport" id="viewport">
             <div class="empty" id="empty">
               <p class="empty-symbol">[ ↗ ]</p>
-              <h2>Watch the decision happen.</h2>
-              <p>
+              <h2 id="empty-title">Watch the decision happen.</h2>
+              <p id="empty-description">
                 Start a task to see a real browser, its available<br />actions,
                 and the model's choice.
               </p>
@@ -84,7 +93,7 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
             <div id="targets"></div>
           </div>
           <div class="browser-footer">
-            <span id="page-title">Isolated demo tab</span
+            <span id="page-title">Isolated test tab</span
             ><span>AX tree → typed actions → CDP</span>
           </div>
         </div>
@@ -132,10 +141,10 @@ Find one-way flights from Zurich to London on September 20, 2026, for one adult 
       <details>
         <summary>What the model sees</summary>
         <pre id="model-state">
-Start a demo to inspect its structured state.</pre>
+Start a test to inspect its structured state.</pre>
       </details>
       <footer>
-        <span>Browser Use × TypeSafe · Experimental baseline</span
+        <span>Browser Use × TypeSafe · End-to-end test runner</span
         ><span id="helper">Text helper loading</span>
       </footer>
     </main>

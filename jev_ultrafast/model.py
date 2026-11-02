@@ -22,6 +22,7 @@ def post_json(url, key, body):
             time.sleep(0.5 * 2**attempt)
             continue
         if response.is_error:
+            print("[ERROR LOG] : response.text : " , response.text)
             raise RuntimeError(f"Model provider returned HTTP {response.status_code}; no action executed.")
         return response.json()
     raise RuntimeError("Model unavailable")
@@ -190,6 +191,7 @@ def field_text(context):
         if set(output) != {"text"} or not isinstance(value, str) or not value.strip() or len(value) > 2000:
             raise ValueError()
     except (ValueError, KeyError, TypeError):
+        print("[ERROR LOG] : field_text output : " , result["choices"][0]["message"]["content"])
         raise ValueError("Text helper returned no valid field value; nothing typed.") from None
     return value, {
         "model": model,

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from browser_harness.admin import ensure_daemon
-from browser_harness.helpers import cdp
+from browser_harness.helpers import SCREENSHOT_IPC_RESPONSE_TIMEOUT_SECONDS, cdp
 
 # Atomically read visible content and controls, preserving actual DOM node identity.
 READ_STATE = Path(__file__).with_name("snapshot.js").read_text()
@@ -41,7 +41,7 @@ class Browser:
             raise StalePage("Document changed during evaluation")
         return response.get("result", {}).get("value")
 
-    def observe(self, screenshot=True):
+    def observe(self, screenshot=True, screenshot_required=False):
         if getattr(self, "after_input", None):
             action, self.after_input = self.after_input, None
             # This is read-only and happens after execution was logged, even if navigation interrupts it.
@@ -77,7 +77,12 @@ class Browser:
         for attempt in range(10):
             try:
                 return browser_operation(
-                    {"operation": "observe", "session": self.session, "screenshot": screenshot}
+                    {
+                        "operation": "observe",
+                        "session": self.session,
+                        "screenshot": screenshot,
+                        "screenshot_required": screenshot_required,
+                    }
                 )
             except StalePage:
                 if attempt == 9:
@@ -190,5 +195,15 @@ def browser_operation(request):
         raise StalePage("Document is navigating")
     info["fingerprint"] = fingerprint(info)
     if request.get("screenshot", True):
-        info["screenshot"] = call("Page.captureScreenshot", format="jpeg", quality=72)["data"]
+        try:
+            info["screenshot"] = call(
+                "Page.captureScreenshot",
+                _response_timeout=SCREENSHOT_IPC_RESPONSE_TIMEOUT_SECONDS,
+                format="jpeg",
+                quality=72,
+            )["data"]
+        except TimeoutError:
+            if request.get("screenshot_required"):
+                raise
+            info["screenshot"] = None
     return info

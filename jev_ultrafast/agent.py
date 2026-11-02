@@ -1,6 +1,7 @@
 """The complete agent loop. Typed choices, observable state, bounded execution."""
 
 import base64
+import json
 import time
 from pathlib import Path
 
@@ -10,17 +11,21 @@ from .questions import MAX_STEPS
 
 
 class Agent:
-    def __init__(self, url, goals, *, record_dir=None, screenshots=False):
+    def __init__(self, url, goals, *, decision_log=None, record_dir=None, screenshots=False):
         task = goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
         if not task:
             raise ValueError("Supply a task")
         plan = [task]
         self.pending_text = None
         self.browser = Browser(url)
+        self.decision_log = Path(decision_log) if decision_log else None
         self.record_dir = Path(record_dir) if record_dir else None
         self.screenshots = screenshots or bool(record_dir)
         try:
-            page = self.browser.observe(screenshot=self.screenshots)
+            page = self.browser.observe(
+                screenshot=self.screenshots,
+                screenshot_required=bool(self.record_dir),
+            )
         except Exception:
             self.browser.close()
             raise
@@ -35,10 +40,15 @@ class Agent:
             plan_index=0,
             decisions=[],
             text_calls=[],
+            token_usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
             elapsed_ms=0,
             started_at=None,
             record=bool(self.record_dir),
+            decision_log=str(self.decision_log) if self.decision_log else None,
         )
+        if self.decision_log:
+            self.decision_log.parent.mkdir(parents=True, exist_ok=True)
+            self.decision_log.write_text("", encoding="utf-8")
         if self.record_dir:
             self.record_dir.mkdir(parents=True, exist_ok=True)
             (self.record_dir / "000000.jpg").write_bytes(base64.b64decode(page["screenshot"]))
@@ -48,6 +58,36 @@ class Agent:
             **{k: v for k, v in self.state.items() if k != "browser"},
             "elements": action_space(self.state["page"]["actions"])[0],
         }
+
+    # Write a log entry for each decision.
+    def log_decision(self, decision, page, number):
+        usage = decision.get("usage") or {}
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+        input_tokens = input_tokens if isinstance(input_tokens, int) else 0
+        output_tokens = output_tokens if isinstance(output_tokens, int) else 0
+        totals = self.state.setdefault("token_usage", {"requests": 0, "input_tokens": 0, "output_tokens": 0})
+        totals["requests"] += 1
+        totals["input_tokens"] += input_tokens
+        totals["output_tokens"] += output_tokens
+        total_cost = totals["input_tokens"] / 1_000_000 * 0.042  
+
+        print(f"Jev request {number} - input tokens: {input_tokens}, output tokens: {output_tokens}", flush=True)
+        decision_log = getattr(self, "decision_log", None)
+        if not decision_log:
+            return
+        action = next((item for item in page["actions"] if item["id"] == decision["choice"]), None)
+        label = action["label"] if action else decision["choice"]
+        label = " ".join(label.split())
+        output = {key: value for key, value in decision.items() if key != "request"}
+        with decision_log.open("a", encoding="utf-8") as log:
+            log.write(f"Decision {number} - {label}:\n")
+            log.write("Index | Input tokens | Output tokens\n")
+            log.write(f"{number} | {input_tokens} | {output_tokens}\n")
+            log.write(f"{number} | {totals['input_tokens']} | {totals['output_tokens']}\n\n")
+            log.write(f"Accumulated cost: ${total_cost:.8f}\n\n")
+            json.dump(output, log, ensure_ascii=False, indent=2)
+            log.write("\n\n")
 
     def command(self, name, body=None):
         body = body or {}
@@ -59,22 +99,29 @@ class Agent:
             except StalePage:
                 state["decision"] = None
                 state["status"] = "ready"
-                state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                state["page"] = state["browser"].observe(
+                    screenshot=self.screenshots,
+                    screenshot_required=bool(self.record_dir),
+                )
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
         elif name == "predict":
             if not state["browser"]:
-                raise ValueError("Start a demo first")
+                raise ValueError("Start a test first")
             if state["started_at"] is None:
                 state["started_at"] = time.perf_counter()
             if not state["browser"].fresh(state["page"]):
-                state["page"] = state["browser"].observe(screenshot=self.screenshots)
+                state["page"] = state["browser"].observe(
+                    screenshot=self.screenshots,
+                    screenshot_required=bool(self.record_dir),
+                )
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
-                raise ValueError("This run has stopped. Start a fresh demo.")
+                raise ValueError("This run has stopped. Start a fresh test.")
             if len(state["decisions"]) >= MAX_STEPS * 2:
-                raise ValueError("Reached the demo's model-call budget")
+                raise ValueError("Reached the test's model-call budget")
             state["decision"] = choose(state["page"], state["goal"], state["history"])
+            self.log_decision(state["decision"], state["page"], len(state["decisions"]) + 1)
             state["decisions"].append(
                 {
                     **state["decision"],
@@ -101,7 +148,7 @@ class Agent:
             action = next(a for a in page["actions"] if a["id"] == selected)
             if len(state["history"]) >= MAX_STEPS:
                 state["status"] = "blocked"
-                raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
+                raise ValueError(f"Stopped at the {MAX_STEPS}-action test budget")
             text, helper = None, None
             if action["kind"] == "fill":
                 if not state["browser"].fresh(page):
@@ -139,7 +186,10 @@ class Agent:
                     "elapsed_ms": state["elapsed_ms"],
                 }
             )
-            state["page"] = state["browser"].observe(screenshot=self.screenshots)
+            state["page"] = state["browser"].observe(
+                screenshot=self.screenshots,
+                screenshot_required=bool(self.record_dir),
+            )
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             state["history"][-1].update(
                 page_changed=state["page"]["fingerprint"] != page["fingerprint"],

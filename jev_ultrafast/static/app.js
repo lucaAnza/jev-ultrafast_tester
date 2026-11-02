@@ -3,12 +3,6 @@ const token = document.querySelector('meta[name="demo-token"]').content;
 let state = null,
   busy = false,
   automatic = false;
-const goals = {
-  flights: 'Find one-way flights from Zurich to London on September 20, 2026, for one adult in economy. Stop when matching flight options are visible. Do not select or book a flight.',
-  travel: 'Find a Design stay in Lisbon with Free cancellation and open Casa Flora.',
-  research:
-    "Open the article about using finite choices to control browser agents.",
-};
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -33,7 +27,7 @@ async function call(name, body = {}) {
 function controls() {
   const live = state?.page && !["done", "blocked"].includes(state.status);
   $("start").disabled = busy;
-  $("scenario").disabled = busy;
+  $("start-url").disabled = busy;
   $("goal").disabled = busy;
   $("choose").disabled = busy || !live;
   $("execute").disabled = busy || !state?.decision || !live;
@@ -80,7 +74,7 @@ function render() {
       state.decision ||
       (state.status === "done" ? state.decisions?.at(-1) : null);
   const labels = {
-    idle: "Ready to explore",
+    idle: "Ready to test",
     ready: "Page observed · ready for a decision",
     predicted: "Choice ready · inspect or execute",
     done: "Jev reports complete · inspect the page",
@@ -91,9 +85,17 @@ function render() {
     controls();
     return;
   }
-  $("empty").hidden = true;
-  $("screenshot").hidden = false;
-  $("screenshot").src = `data:image/jpeg;base64,${page.screenshot}`;
+  if (page.screenshot) {
+    $("empty").hidden = true;
+    $("screenshot").hidden = false;
+    $("screenshot").src = `data:image/jpeg;base64,${page.screenshot}`;
+  } else {
+    $("screenshot").hidden = true;
+    $("empty").hidden = false;
+    $("empty-title").textContent = "Live preview temporarily unavailable.";
+    $("empty-description").textContent =
+      "The browser state is still available and the agent can continue.";
+  }
   $("url").textContent = page.url;
   $("page-title").textContent = page.title;
   $("action-count").textContent = `${state.elements.length} elements`;
@@ -150,12 +152,9 @@ $("task-form").addEventListener("submit", (event) => {
   automatic = false;
   perform(
     () =>
-      call("reset", { scenario: $("scenario").value, goal: $("goal").value }),
+      call("reset", { url: $("start-url").value, goal: $("goal").value }),
     "Opening a fresh browser…",
   );
-});
-$("scenario").addEventListener("change", () => {
-  $("goal").value = goals[$("scenario").value];
 });
 $("choose").addEventListener("click", () =>
   perform(() => call("predict"), "Jev is comparing the actions…"),

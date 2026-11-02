@@ -118,11 +118,10 @@ form {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.task-label {
+.task-field {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
+  flex-direction: column;
+  gap: 7px;
   font-size: 12px;
   color: #77776e;
   margin-bottom: 10px;
@@ -133,17 +132,10 @@ form {
   gap: 16px;
 }
 input,
-select,
 button {
   font: inherit;
 }
-select {
-  border: 0;
-  color: #64675e;
-  background: transparent;
-  font-size: 12px;
-}
-input[type="text"],
+#start-url,
 #goal {
   width: 100%;
   min-width: 0;
@@ -156,7 +148,7 @@ input[type="text"],
   color: #343530;
 }
 input:focus-visible,
-select:focus-visible {
+textarea:focus-visible {
   outline: 2px solid #2f8a60;
   outline-offset: 0;
 }
@@ -667,8 +659,7 @@ footer {
   .viewport {
     min-height: 240px;
   }
-  .task-label,
-  select {
+  .task-field {
     font-size: 14px;
   }
   .distribution-label {
