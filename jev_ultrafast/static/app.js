@@ -62,6 +62,7 @@ async function perform(fn, label) {
 }
 function render() {
   if (!state) return;
+  $("decision-model").textContent = state.decision_model;
   $("helper").textContent = `Text helper · ${state.text_model}`;
   $("plan").innerHTML = (state.plan || [])
     .map(

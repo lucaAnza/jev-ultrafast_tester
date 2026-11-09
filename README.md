@@ -8,7 +8,7 @@
 
 **An end-to-end website tester with a dynamic, indexed action space.**
 
-Enter a website URL and one testing goal. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) picks an operation and an observed element. A small LLM writes text only when the operation is `TYPE_TEXT`, while the inspector records each action and its observed result.
+Enter a website URL and one testing goal. A System One decision model—[TypeSafe's Jev](https://docs.typesafe.ai/introduction) by default—picks an operation and an observed element. A small LLM writes text only when the operation is `TYPE_TEXT`, while the inspector records each action and its observed result.
 
 [Read the loop](jev_ultrafast/agent.py) · [Historical measurements](docs/performance.md)
 
@@ -27,7 +27,7 @@ Every observation produces a new element table:
 The operations are `CLICK`, `TYPE_TEXT`, `SELECT`, `SCROLL_UP`, `SCROLL_DOWN`, `WAIT`, `DONE`, and `BLOCKED`. Only supported operations and targets are offered.
 
 ```text
-                      one TypeSafe request
+                     one System One request
                      ┌───────────────────────────┐
 page → element table → operation                 │
                      │ click_target              │
@@ -53,7 +53,7 @@ git clone https://github.com/browser-use/jev-ultrafast.git
 cd jev-ultrafast
 uv sync
 cp .env.example .env
-# Add TYPESAFE_API_KEY and TEXT_MODEL_API_KEY.
+# Add the selected decision-provider key and TEXT_MODEL_API_KEY.
 uv run jev
 ```
 
@@ -64,6 +64,16 @@ Every **Start test** creates a separate `artifacts/jev-decisions-<timestamp>.log
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
 `TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The sample configuration uses `google/gemma-4-31b-it:free` with reasoning disabled; `inception/mercury-2.5`, GLM, and DeepSeek can also use the OpenAI-compatible text helper when configured with the appropriate model and endpoint.
+
+The decision model defaults to TypeSafe Jev. To run Drex Max through OpenRouter's Decisions API instead, use:
+
+```dotenv
+DECISION_PROVIDER=openrouter
+DECISION_MODEL=nace-ai/drex-max
+OPENROUTER_API_KEY=your_openrouter_key
+```
+
+Drex Max is a System One decision model, not a chat/text model. The adapter sends the same page state and typed operation/target heads to OpenRouter's `POST /api/alpha/decisions` endpoint. `TYPE_TEXT` still uses the separately configured text helper.
 
 ## Use the library
 

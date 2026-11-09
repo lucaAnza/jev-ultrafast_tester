@@ -1,4 +1,4 @@
-"""TypeSafe makes choices; an optional small OpenAI-compatible model writes field values."""
+"""A System One provider makes choices; an optional text model writes field values."""
 
 import json
 import math
@@ -10,6 +10,28 @@ import httpx
 from .questions import NEXT_ACTION, TARGET, TEXT_VALUE
 
 CLIENT = httpx.Client(http2=True, timeout=25)
+
+
+def decision_provider():
+    """Resolve the compatible System One endpoint without changing the decision contract."""
+    provider = os.environ.get("DECISION_PROVIDER", "typesafe").strip().lower()
+    if provider == "typesafe":
+        return {
+            "name": provider,
+            "url": "https://api.typesafe.ai/v1/systemone",
+            "key": os.environ.get("TYPESAFE_API_KEY"),
+            "model": os.environ.get("DECISION_MODEL") or os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+            "key_name": "TYPESAFE_API_KEY",
+        }
+    if provider == "openrouter":
+        return {
+            "name": provider,
+            "url": "https://openrouter.ai/api/alpha/decisions",
+            "key": os.environ.get("OPENROUTER_API_KEY"),
+            "model": os.environ.get("DECISION_MODEL") or "nace-ai/drex-max",
+            "key_name": "OPENROUTER_API_KEY",
+        }
+    raise ValueError("DECISION_PROVIDER must be 'typesafe' or 'openrouter'.")
 
 
 def post_json(url, key, body):
@@ -42,7 +64,7 @@ def validate_choice(answer, ids):
     except (KeyError, TypeError, ValueError):
         valid = False
     if not valid:
-        raise ValueError("Invalid TypeSafe response; no action executed.")
+        raise ValueError("Invalid decision response; no action executed.")
     return answer
 
 
@@ -80,6 +102,9 @@ def action_space(actions):
 
 
 def choose(state, goal, history):
+    provider = decision_provider()
+    if not provider["key"]:
+        raise ValueError(f"{provider['key_name']} is required for decision requests.")
     elements, targets, controls = action_space(state["actions"])
     labels = {
         "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
@@ -106,7 +131,7 @@ def choose(state, goal, history):
             "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
         }
     body = {
-        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+        "model": provider["model"],
         "state": {
             "page": {k: state[k] for k in ("url", "title", "text")},
             "elements": elements,
@@ -117,7 +142,7 @@ def choose(state, goal, history):
         "questions": questions,
     }
     started = time.perf_counter()
-    result = post_json("https://api.typesafe.ai/v1/systemone", os.environ["TYPESAFE_API_KEY"], body)
+    result = post_json(provider["url"], provider["key"], body)
     operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
     operation = operation_answer["choice"]
     target = None

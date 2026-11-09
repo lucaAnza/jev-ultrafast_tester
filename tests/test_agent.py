@@ -72,7 +72,7 @@ def test_invalid_choice_is_rejected(mutation):
         a["choice"] = "b"
     else:
         a["confidence"] = 5
-    with pytest.raises(ValueError, match="Invalid TypeSafe"):
+    with pytest.raises(ValueError, match="Invalid decision"):
         model.validate_choice(a, {"a", "b"})
 
 
@@ -108,6 +108,39 @@ def test_all_heads_are_one_request_and_only_matching_head_executes(monkeypatch):
     assert set(calls[0]["questions"]) == {"operation", "click_target", "type_text_target"}
 
 
+def test_openrouter_adapter_uses_drex_decisions_endpoint(monkeypatch):
+    calls = []
+
+    def post(url, key, body):
+        calls.append((url, key, body))
+        return {
+            "model": "nace-ai/drex-max",
+            "answers": {
+                "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+                "click_target": choice(body["questions"]["click_target"]["criteria"], "2"),
+            },
+        }
+
+    monkeypatch.setenv("DECISION_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test")
+    monkeypatch.delenv("DECISION_MODEL", raising=False)
+    monkeypatch.setattr(model, "post_json", post)
+
+    decision = model.choose(page(), "Click Go", [])
+
+    assert decision["choice"] == "e3"
+    assert calls[0][0] == "https://openrouter.ai/api/alpha/decisions"
+    assert calls[0][1] == "openrouter-test"
+    assert calls[0][2]["model"] == "nace-ai/drex-max"
+    assert set(calls[0][2]["questions"]) == {"operation", "click_target", "type_text_target"}
+
+
+def test_decision_provider_rejects_unknown_provider(monkeypatch):
+    monkeypatch.setenv("DECISION_PROVIDER", "chat")
+    with pytest.raises(ValueError, match="DECISION_PROVIDER"):
+        model.decision_provider()
+
+
 def test_click_cannot_consume_a_text_target(monkeypatch):
     def post(_url, _key, body):
         return {
@@ -121,7 +154,7 @@ def test_click_cannot_consume_a_text_target(monkeypatch):
 
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
     monkeypatch.setattr(model, "post_json", post)
-    with pytest.raises(ValueError, match="Invalid TypeSafe"):
+    with pytest.raises(ValueError, match="Invalid decision"):
         model.choose(page(), "Find a book", [])
 
 
