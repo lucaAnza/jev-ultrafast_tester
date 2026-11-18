@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .agent import Agent
-from .model import decision_provider
+from .utils.config import PROJECT_ROOT, load_environment
 from .questions import MAX_STEPS
 
 ROOT = Path(__file__).parent
@@ -22,26 +22,19 @@ LOCK = threading.Lock()
 AGENT = None
 
 
-def load_environment():
-    path = Path.cwd() / ".env"
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key, value)
-
-
 def response_state():
+    """Return the current serializable state plus inspector metadata."""
     state = AGENT.snapshot() if AGENT else {"page": None, "status": "idle", "history": [], "decision": None}
     return {
         **state,
-        "decision_model": decision_provider()["model"],
+        "decision_model": state.get("decision_model"),
         "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"),
         "max_steps": MAX_STEPS,
     }
 
 
 def close_browser():
+    """Close and forget the active test agent."""
     global AGENT
     if AGENT:
         AGENT.close()
@@ -49,6 +42,7 @@ def close_browser():
 
 
 def start_url(value):
+    """Accept only bounded HTTP or HTTPS starting URLs."""
     url = value.strip() if isinstance(value, str) else ""
     parsed = urlparse(url)
     if len(url) > 2048 or parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -57,21 +51,27 @@ def start_url(value):
 
 
 def command(name, body):
+    """Create a run or forward one bounded command to the active agent."""
     global AGENT
     if name == "reset":
         url = start_url(body.get("url", ""))
+        provider = body.get("decision_provider", "")
         print(f"Starting test for {url}", flush=True)
         goal = body.get("goal", "").strip()
         if not goal or len(goal) > 2000:
             raise ValueError("Enter 1–2,000 characters")
         close_browser()
         run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        logs = PROJECT_ROOT / "logs"
+        save_screenshots = body.get("save_screenshots") is True
         AGENT = Agent(
             url,
             goal,
-            decision_log=Path.cwd() / "artifacts" / f"jev-decisions-{run_id}.log",
+            decision_provider=provider,
+            decision_log=logs / f"jev-decisions-{run_id}.log",
             screenshots=True,
-            record_dir=Path.cwd() / "artifacts" / "frames" if body.get("record") else None,
+            model_screenshots=body.get("model_screenshots") is True,
+            record_dir=logs / f"jev-screenshots-{run_id}" if save_screenshots else None,
         )
     else:
         if AGENT is None:
@@ -82,6 +82,7 @@ def command(name, body):
 
 class Handler(BaseHTTPRequestHandler):
     def send(self, status, content, mime="application/json"):
+        """Send one no-cache response, tolerating clients that already disconnected."""
         content = content if isinstance(content, bytes) else content.encode()
         self.send_response(status)
         self.send_header("Content-Type", mime)
@@ -89,7 +90,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(content)
+        try:
+            self.wfile.write(content)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
         if self.headers.get("Host") != f"127.0.0.1:{PORT}":

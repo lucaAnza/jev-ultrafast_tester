@@ -102,9 +102,12 @@ class Browser:
             return current == [page["page_key"], page["guards"].get(str(node))]
         return self.evaluate(MARKER) == page["marker"]
 
-    def act(self, action, page, text=None):
+    def act(self, action, page, text=None, on_send=None):
+        """Validate an observed target, announce the command, then execute it once."""
         if not self.fresh(page, action):
             raise StalePage("Page changed since this decision. Observe again.")
+        if on_send:
+            on_send(action, text)
         if action["kind"] == "wait":
             time.sleep(0.1)
         result = browser_operation({"operation": "act", "session": self.session, "action": action, "text": text})

@@ -1,6 +1,8 @@
 """Offline contracts for a dynamic operation/target policy. No paid APIs."""
 
+import base64
 import json
+import os
 import time
 from copy import deepcopy
 from unittest.mock import Mock
@@ -10,6 +12,7 @@ import pytest
 from jev_ultrafast import agent as loop
 from jev_ultrafast import model
 from jev_ultrafast.browser import StalePage, browser_operation, fingerprint
+from jev_ultrafast.utils.config import load_environment
 from jev_ultrafast.demo import start_url
 
 
@@ -55,6 +58,46 @@ def test_start_url_accepts_websites(url):
 def test_start_url_rejects_non_web_urls(url):
     with pytest.raises(ValueError, match="valid http"):
         start_url(url)
+
+
+def test_environment_file_fills_an_inherited_empty_key(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "")
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=from-file\n")
+
+    load_environment(tmp_path / ".env")
+
+    assert os.environ["TYPESAFE_API_KEY"] == "from-file"
+
+
+def test_environment_file_does_not_replace_a_nonempty_export(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TYPESAFE_API_KEY", "exported")
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=from-file\n")
+
+    load_environment(tmp_path / ".env")
+
+    assert os.environ["TYPESAFE_API_KEY"] == "exported"
+
+
+def test_decision_provider_loads_its_key_without_demo_startup(monkeypatch, tmp_path):
+    monkeypatch.setattr("jev_ultrafast.utils.config.PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=provider-key\n")
+
+    provider = model.decision_provider("typesafe")
+
+    assert provider["key"] == "provider-key"
+
+
+def test_decision_provider_finds_project_env_from_logs(monkeypatch, tmp_path):
+    monkeypatch.setattr("jev_ultrafast.utils.config.PROJECT_ROOT", tmp_path)
+    (tmp_path / "logs").mkdir()
+    monkeypatch.chdir(tmp_path / "logs")
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=project-key\n")
+
+    assert model.decision_provider("typesafe")["key"] == "project-key"
 
 
 @pytest.mark.parametrize("mutation", ["unknown", "nan", "missing", "negative", "non_max", "confidence"])
@@ -121,12 +164,10 @@ def test_openrouter_adapter_uses_drex_decisions_endpoint(monkeypatch):
             },
         }
 
-    monkeypatch.setenv("DECISION_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test")
-    monkeypatch.delenv("DECISION_MODEL", raising=False)
     monkeypatch.setattr(model, "post_json", post)
 
-    decision = model.choose(page(), "Click Go", [])
+    decision = model.choose(page(), "Click Go", [], "openrouter")
 
     assert decision["choice"] == "e3"
     assert calls[0][0] == "https://openrouter.ai/api/alpha/decisions"
@@ -135,10 +176,57 @@ def test_openrouter_adapter_uses_drex_decisions_endpoint(monkeypatch):
     assert set(calls[0][2]["questions"]) == {"operation", "click_target", "type_text_target"}
 
 
-def test_decision_provider_rejects_unknown_provider(monkeypatch):
-    monkeypatch.setenv("DECISION_PROVIDER", "chat")
-    with pytest.raises(ValueError, match="DECISION_PROVIDER"):
-        model.decision_provider()
+def test_typesafe_screenshot_is_shared_once_in_state(monkeypatch):
+    calls = []
+    sent_requests = []
+
+    def post(_url, _key, body, headers):
+        calls.append((body, headers))
+        return {
+            "model": "jev-1.14.0",
+            "answers": {
+                "operation": choice(body["questions"]["operation"]["criteria"], "CLICK"),
+                "click_target": choice(body["questions"]["click_target"]["criteria"], "2"),
+            },
+        }
+
+    observed = page()
+    observed["screenshot"] = base64.b64encode(b"jpeg bytes").decode()
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setattr(model, "post_json", post)
+
+    result = model.choose(
+        observed,
+        "Click Go",
+        [],
+        include_screenshot=True,
+        on_request=sent_requests.append,
+    )
+
+    body, headers = calls[0]
+    reference = body["state"]["browser_view"]
+    assert body["assets"][reference]["data_base64"] == observed["screenshot"]
+    assert headers == {"TypeSafe-Danger-Zone-Images": "true"}
+    assert result["request"]["assets"][reference]["data_base64"].startswith("<omitted ")
+    assert sent_requests[0]["body"]["assets"][reference]["data_base64"] == observed["screenshot"]
+    assert sent_requests[0]["headers"] == headers
+    assert "Authorization" not in sent_requests[0]["headers"]
+
+
+def test_screenshot_mode_requires_typesafe_and_a_captured_image(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+
+    with pytest.raises(ValueError, match="supported only by Jev AI"):
+        model.choose(page(), "Click Go", [], "openrouter", include_screenshot=True)
+    with pytest.raises(ValueError, match="screenshot is unavailable"):
+        model.choose(page(), "Click Go", [], include_screenshot=True)
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", "chat"])
+def test_decision_provider_requires_supported_choice(value):
+    with pytest.raises(ValueError, match="Choose Jev AI or OpenRouter"):
+        model.decision_provider(value)
 
 
 def test_click_cannot_consume_a_text_target(monkeypatch):
@@ -220,7 +308,9 @@ def test_missing_text_credential_stops_before_guessing(monkeypatch):
 def runner():
     a = loop.Agent.__new__(loop.Agent)
     a.screenshots = False
+    a.preview_screenshots = False
     a.record_dir = None
+    a.model_screenshots = False
     a.pending_text = None
     p = page()
     a.state = {
@@ -228,7 +318,9 @@ def runner():
         "page": p,
         "decision": decision(),
         "goal": "Find a book",
+        "decision_provider": "typesafe",
         "history": [],
+        "harness_actions": [],
         "decisions": [],
         "status": "predicted",
         "started_at": time.perf_counter(),
@@ -236,6 +328,72 @@ def runner():
         "text_calls": [],
     }
     return a
+
+
+def test_step_screenshot_is_saved_with_a_stable_sequence(tmp_path):
+    runner = loop.Agent.__new__(loop.Agent)
+    runner.record_dir = tmp_path
+    encoded = base64.b64encode(b"jpeg bytes").decode()
+
+    runner._save_screenshot({"screenshot": encoded}, 3)
+
+    assert (tmp_path / "0003.jpg").read_bytes() == b"jpeg bytes"
+
+
+def test_exact_model_request_is_written_without_authorization(runner, tmp_path):
+    runner.decision_log = tmp_path / "decisions.log"
+    runner.decision_log.write_text("")
+    request = {
+        "url": "https://api.typesafe.ai/v1/systemone",
+        "headers": {"TypeSafe-Danger-Zone-Images": "true"},
+        "body": {"assets": {"view": {"data_base64": "full-image-data"}}},
+    }
+
+    runner.log_request(request, 1)
+
+    saved = runner.decision_log.read_text()
+    assert "Decision 1 request:" in saved
+    assert "full-image-data" in saved
+    assert "TypeSafe-Danger-Zone-Images" in saved
+    assert "Authorization" not in saved
+
+
+def test_agent_rejects_image_mode_for_openrouter_before_opening_browser():
+    with pytest.raises(ValueError, match="supported only by Jev AI"):
+        loop.Agent(
+            "https://example.test",
+            "Test it",
+            decision_provider="openrouter",
+            model_screenshots=True,
+        )
+
+
+def test_image_mode_is_applied_to_each_prediction(runner, monkeypatch):
+    selected = decision("e3")
+    choose = Mock(return_value=selected)
+    monkeypatch.setattr(loop, "choose", choose)
+    runner.state["page"]["screenshot"] = base64.b64encode(b"jpeg bytes").decode()
+    runner.state["decision"] = None
+    runner.state["status"] = "ready"
+
+    runner.command("predict", {"model_screenshots": True})
+
+    assert runner.state["model_screenshots"] is True
+    assert choose.call_args.kwargs["include_screenshot"] is True
+
+
+def test_image_mode_can_be_disabled_during_a_run(runner, monkeypatch):
+    choose = Mock(return_value=decision("e3"))
+    monkeypatch.setattr(loop, "choose", choose)
+    runner.model_screenshots = True
+    runner.state["model_screenshots"] = True
+    runner.state["decision"] = None
+    runner.state["status"] = "ready"
+
+    runner.command("predict", {"model_screenshots": False})
+
+    assert runner.state["model_screenshots"] is False
+    assert choose.call_args.kwargs["include_screenshot"] is False
 
 
 def test_stale_decision_is_consumed_before_any_mutation(runner):
@@ -285,6 +443,39 @@ def test_stale_observation_preserves_executed_action(runner):
         runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
     assert runner.state["history"][-1]["action"] == "Go"
     runner.state["browser"].act.assert_called_once()
+
+
+def test_harness_command_is_logged_before_mutation_and_then_confirmed(runner):
+    runner.state["decision"] = decision("e3")
+
+    def act(action, _page, text=None, on_send=None):
+        on_send(action, text)
+        assert runner.state["harness_actions"][-1]["status"] == "sent"
+
+    runner.state["browser"].act.side_effect = act
+
+    runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+
+    entry = runner.state["harness_actions"][-1]
+    assert entry["command"] == "CLICK"
+    assert entry["action"] == "Go"
+    assert entry["status"] == "confirmed"
+
+
+def test_sent_harness_command_survives_an_execution_error(runner):
+    runner.state["decision"] = decision("e3")
+
+    def act(action, _page, text=None, on_send=None):
+        on_send(action, text)
+        raise RuntimeError("Harness connection failed")
+
+    runner.state["browser"].act.side_effect = act
+
+    with pytest.raises(RuntimeError, match="Harness connection failed"):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+
+    assert runner.state["harness_actions"][-1]["status"] == "sent"
+    assert runner.state["history"] == []
 
 
 def test_observation_is_one_atomic_browser_read(monkeypatch):
@@ -342,10 +533,12 @@ def test_executor_rejects_a_stale_page_before_browser_input(monkeypatch):
     b = browser.Browser.__new__(browser.Browser)
     b.fresh = Mock(return_value=False)
     operation = Mock()
+    on_send = Mock()
     monkeypatch.setattr(browser, "browser_operation", operation)
     with pytest.raises(StalePage):
-        b.act(page()["actions"][0], page(), "book")
+        b.act(page()["actions"][0], page(), "book", on_send=on_send)
     operation.assert_not_called()
+    on_send.assert_not_called()
 
 
 @pytest.mark.parametrize("response", [{"exceptionDetails": {}}, {"result": {}}])

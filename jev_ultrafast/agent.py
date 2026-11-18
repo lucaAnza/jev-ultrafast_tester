@@ -1,37 +1,53 @@
 """The complete agent loop. Typed choices, observable state, bounded execution."""
 
 import base64
-import json
 import time
 from pathlib import Path
 
 from .browser import Browser, StalePage
 from .model import action_space, choose, field_context, field_text
+from .model import decision_provider as resolve_decision_provider
 from .questions import MAX_STEPS
+from .run_log import log_decision, log_request
 
 
 class Agent:
-    def __init__(self, url, goals, *, decision_log=None, record_dir=None, screenshots=False):
+    def __init__(
+        self,
+        url,
+        goals,
+        *,
+        decision_provider="typesafe",
+        decision_log=None,
+        record_dir=None,
+        screenshots=False,
+        model_screenshots=False,
+    ):
+        """Open the test page and create the first observable state."""
         task = goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
         if not task:
             raise ValueError("Supply a task")
         plan = [task]
         self.pending_text = None
+        provider = resolve_decision_provider(decision_provider)
+        if model_screenshots and provider["name"] != "typesafe":
+            raise ValueError("Screenshot model input is currently supported only by Jev AI.")
         self.browser = Browser(url)
         self.decision_log = Path(decision_log) if decision_log else None
         self.record_dir = Path(record_dir) if record_dir else None
-        self.screenshots = screenshots or bool(record_dir)
+        self.preview_screenshots = bool(screenshots)
+        self.model_screenshots = bool(model_screenshots)
+        self.screenshots = self.preview_screenshots or self.model_screenshots or bool(record_dir)
         try:
-            page = self.browser.observe(
-                screenshot=self.screenshots,
-                screenshot_required=bool(self.record_dir),
-            )
+            page = self._observe()
         except Exception:
             self.browser.close()
             raise
         self.state = dict(
             browser=self.browser,
             goal="\n".join(plan),
+            decision_provider=provider["name"],
+            decision_model=provider["model"],
             page=page,
             decision=None,
             history=[],
@@ -40,10 +56,14 @@ class Agent:
             plan_index=0,
             decisions=[],
             text_calls=[],
+            harness_actions=[],
             token_usage={"requests": 0, "input_tokens": 0, "output_tokens": 0},
             elapsed_ms=0,
             started_at=None,
             record=bool(self.record_dir),
+            model_screenshots=self.model_screenshots,
+            save_screenshots=bool(self.record_dir),
+            screenshot_dir=str(self.record_dir) if self.record_dir else None,
             decision_log=str(self.decision_log) if self.decision_log else None,
         )
         if self.decision_log:
@@ -51,47 +71,86 @@ class Agent:
             self.decision_log.write_text("", encoding="utf-8")
         if self.record_dir:
             self.record_dir.mkdir(parents=True, exist_ok=True)
-            (self.record_dir / "000000.jpg").write_bytes(base64.b64decode(page["screenshot"]))
+            self._save_screenshot(page, 0)
+
+    def _observe(self):
+        """Read one page state with a screenshot whenever a selected mode needs it."""
+        browser = getattr(self, "browser", None) or self.state["browser"]
+        return browser.observe(
+            screenshot=self.screenshots,
+            screenshot_required=bool(self.record_dir),
+        )
+
+    def _save_screenshot(self, page, step):
+        """Save one observed JPEG under the run's screenshot directory."""
+        if not self.record_dir:
+            return
+        screenshot = page.get("screenshot")
+        if not screenshot:
+            raise RuntimeError("A required step screenshot was not captured.")
+        (self.record_dir / f"{step:04d}.jpg").write_bytes(base64.b64decode(screenshot))
 
     def snapshot(self):
+        """Return serializable agent state for the inspector and library caller."""
         return {
             **{k: v for k, v in self.state.items() if k != "browser"},
             "elements": action_space(self.state["page"]["actions"])[0],
         }
 
-    # Write a log entry for each decision.
-    def log_decision(self, decision, page, number):
-        usage = decision.get("usage") or {}
-        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-        output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
-        input_tokens = input_tokens if isinstance(input_tokens, int) else 0
-        output_tokens = output_tokens if isinstance(output_tokens, int) else 0
-        totals = self.state.setdefault("token_usage", {"requests": 0, "input_tokens": 0, "output_tokens": 0})
-        totals["requests"] += 1
-        totals["input_tokens"] += input_tokens
-        totals["output_tokens"] += output_tokens
-        total_cost = totals["input_tokens"] / 1_000_000 * 0.042  
+    def set_model_screenshots(self, enabled):
+        """Apply image mode to the next decision and ensure its current view exists."""
+        enabled = enabled is True
+        if enabled and self.state["decision_provider"] != "typesafe":
+            raise ValueError("Screenshot model input is currently supported only by Jev AI.")
+        self.model_screenshots = enabled
+        self.state["model_screenshots"] = enabled
+        self.screenshots = self.preview_screenshots or enabled or bool(self.record_dir)
+        if enabled and not self.state["page"].get("screenshot"):
+            self.state["page"] = self._observe()
 
-        print(f"Jev request {number} - input tokens: {input_tokens}, output tokens: {output_tokens}", flush=True)
-        decision_log = getattr(self, "decision_log", None)
-        if not decision_log:
-            return
-        action = next((item for item in page["actions"] if item["id"] == decision["choice"]), None)
-        label = action["label"] if action else decision["choice"]
-        label = " ".join(label.split())
-        output = {key: value for key, value in decision.items() if key != "request"}
-        with decision_log.open("a", encoding="utf-8") as log:
-            log.write(f"Decision {number} - {label}:\n")
-            log.write("Index | Input tokens | Output tokens\n")
-            log.write(f"{number} | {input_tokens} | {output_tokens}\n")
-            log.write(f"{number} | {totals['input_tokens']} | {totals['output_tokens']}\n\n")
-            log.write(f"Accumulated cost: ${total_cost:.8f}\n\n")
-            json.dump(output, log, ensure_ascii=False, indent=2)
-            log.write("\n\n")
+    def log_decision(self, decision, page, number):
+        """Write one decision and its cumulative token usage to the run log."""
+        totals = self.state.setdefault("token_usage", {"requests": 0, "input_tokens": 0, "output_tokens": 0})
+        log_decision(getattr(self, "decision_log", None), decision, page, number, totals)
+
+    def log_request(self, request, number):
+        """Write the exact model request without its authorization token."""
+        log_request(getattr(self, "decision_log", None), request, number)
+
+    def _log_harness_action(self, action, text):
+        """Record a sanitized command immediately before Browser Harness receives it."""
+        kinds = {
+            "click": "CLICK",
+            "fill": "TYPE_TEXT",
+            "select": "SELECT",
+            "wait": "WAIT",
+        }
+        command = kinds.get(action["kind"], action["kind"].upper())
+        if action["kind"] == "scroll":
+            command = "SCROLL_DOWN" if action["delta"] > 0 else "SCROLL_UP"
+        started_at = self.state.get("started_at")
+        entry = {
+            "step": len(self.state.setdefault("harness_actions", [])) + 1,
+            "action_step": len(self.state["history"]) + 1,
+            "command": command,
+            "action": action["label"],
+            "action_id": action["id"],
+            "node": action.get("node"),
+            "text": text if action["kind"] == "fill" else None,
+            "value": action.get("value") if action["kind"] == "select" else None,
+            "delta": action.get("delta") if action["kind"] == "scroll" else None,
+            "status": "sent",
+            "sent_ms": round((time.perf_counter() - started_at) * 1000) if started_at else 0,
+        }
+        self.state["harness_actions"].append(entry)
+        return entry
 
     def command(self, name, body=None):
+        """Run one predict, act, or combined tick command."""
         body = body or {}
         state = self.state
+        if name in {"predict", "tick"} and "model_screenshots" in body:
+            self.set_model_screenshots(body["model_screenshots"])
         if name == "tick":
             try:
                 self.command("predict", {})
@@ -99,10 +158,7 @@ class Agent:
             except StalePage:
                 state["decision"] = None
                 state["status"] = "ready"
-                state["page"] = state["browser"].observe(
-                    screenshot=self.screenshots,
-                    screenshot_required=bool(self.record_dir),
-                )
+                state["page"] = self._observe()
                 state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
                 return self.snapshot()
         elif name == "predict":
@@ -111,17 +167,22 @@ class Agent:
             if state["started_at"] is None:
                 state["started_at"] = time.perf_counter()
             if not state["browser"].fresh(state["page"]):
-                state["page"] = state["browser"].observe(
-                    screenshot=self.screenshots,
-                    screenshot_required=bool(self.record_dir),
-                )
+                state["page"] = self._observe()
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
                 raise ValueError("This run has stopped. Start a fresh test.")
             if len(state["decisions"]) >= MAX_STEPS * 2:
                 raise ValueError("Reached the test's model-call budget")
-            state["decision"] = choose(state["page"], state["goal"], state["history"])
-            self.log_decision(state["decision"], state["page"], len(state["decisions"]) + 1)
+            decision_number = len(state["decisions"]) + 1
+            state["decision"] = choose(
+                state["page"],
+                state["goal"],
+                state["history"],
+                state["decision_provider"],
+                include_screenshot=self.model_screenshots,
+                on_request=lambda request: self.log_request(request, decision_number),
+            )
+            self.log_decision(state["decision"], state["page"], decision_number)
             state["decisions"].append(
                 {
                     **state["decision"],
@@ -160,8 +221,18 @@ class Agent:
                     text, helper = field_text(context)
                     self.pending_text = (context, text, helper)
                     state["text_calls"].append({**helper, "field": action["label"], "value": text})
-            # Browser.act checks freshness immediately before input, including after text generation.
-            state["browser"].act(action, page, text=text)
+            harness_entry = None
+
+            def log_before_send(sent_action, sent_text):
+                """Persist the exact high-level command after freshness checks pass."""
+                nonlocal harness_entry
+                harness_entry = self._log_harness_action(sent_action, sent_text)
+
+            # Browser.act logs only after its final freshness check and immediately before input.
+            state["browser"].act(action, page, text=text, on_send=log_before_send)
+            if harness_entry:
+                harness_entry["status"] = "confirmed"
+                harness_entry["confirmed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             self.pending_text = None
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             # Record execution before observing. A stale post-action observation must not erase the action.
@@ -186,10 +257,7 @@ class Agent:
                     "elapsed_ms": state["elapsed_ms"],
                 }
             )
-            state["page"] = state["browser"].observe(
-                screenshot=self.screenshots,
-                screenshot_required=bool(self.record_dir),
-            )
+            state["page"] = self._observe()
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             state["history"][-1].update(
                 page_changed=state["page"]["fingerprint"] != page["fingerprint"],
@@ -197,9 +265,7 @@ class Agent:
                 elapsed_ms=state["elapsed_ms"],
             )
             if state["record"]:
-                (self.record_dir / f"{state['elapsed_ms']:06d}.jpg").write_bytes(
-                    base64.b64decode(state["page"]["screenshot"])
-                )
+                self._save_screenshot(state["page"], len(state["history"]))
             repeated = state["history"][-3:]
             state["status"] = (
                 "blocked"
@@ -211,10 +277,12 @@ class Agent:
         return self.snapshot()
 
     def run(self):
+        """Yield states until the decision model reports completion or a blocker."""
         while self.state["status"] not in {"done", "blocked"}:
             yield self.command("tick")
 
     def close(self):
+        """Close the browser tab owned by this agent."""
         self.browser.close()
 
     def __enter__(self):

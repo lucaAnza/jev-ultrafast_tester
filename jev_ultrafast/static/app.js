@@ -12,6 +12,8 @@ const escape = (value) =>
       ],
   );
 const percent = (value) => `${(value * 100).toFixed(value < 0.01 ? 1 : 0)}%`;
+
+// Send one authenticated command and render its returned state.
 async function call(name, body = {}) {
   const response = await fetch(`/api/${name}`, {
     method: "POST",
@@ -24,10 +26,16 @@ async function call(name, body = {}) {
   render();
   return data;
 }
+
+// Enable only the controls that are valid for the current run state.
 function controls() {
   const live = state?.page && !["done", "blocked"].includes(state.status);
   $("start").disabled = busy;
   $("start-url").disabled = busy;
+  $("decision-provider").disabled = busy;
+  $("model-screenshots").disabled =
+    busy || $("decision-provider").value !== "typesafe";
+  $("save-screenshots").disabled = busy;
   $("goal").disabled = busy;
   $("choose").disabled = busy || !live;
   $("execute").disabled = busy || !state?.decision || !live;
@@ -36,6 +44,8 @@ function controls() {
   $("stop").hidden = !automatic;
   $("download").disabled = !state?.history?.length;
 }
+
+// Run one UI action while presenting errors without losing server state.
 async function perform(fn, label) {
   if (busy) return;
   busy = true;
@@ -60,9 +70,55 @@ async function perform(fn, label) {
     controls();
   }
 }
+
+// Format one Browser Harness command without exposing selectors or executable code.
+function harnessRow(entry) {
+  const details = [
+    entry.text ? `text “${entry.text}”` : "",
+    entry.value ? `value “${entry.value}”` : "",
+    entry.delta != null ? `delta ${entry.delta}` : "",
+    entry.node != null ? `observed node ${entry.node}` : "",
+  ].filter(Boolean).join(" · ");
+  const status = entry.status === "confirmed" ? "Confirmed" : entry.status === "sending" ? "Sending…" : "Sent";
+  return `<div class="trace-row harness-row ${escape(entry.status)}"><span class="number">${String(entry.step).padStart(2, "0")}</span><div><b>${escape(entry.command)}</b> · ${escape(entry.action)}${details ? `<small>${escape(details)}</small>` : ""}</div><span class="time">${entry.sent_ms ?? state?.elapsed_ms ?? 0} ms</span><span class="effect">${status}</span></div>`;
+}
+
+// Render persisted commands and an optional command that is about to be sent.
+function renderHarnessLog(pending = null) {
+  const entries = [...(state?.harness_actions || [])];
+  if (pending) entries.push(pending);
+  $("harness-log").innerHTML = entries.length
+    ? entries.map(harnessRow).join("")
+    : '<p class="muted">Commands appear here immediately before browser execution.</p>';
+  $("harness-count").textContent = `${entries.length} ${entries.length === 1 ? "command" : "commands"}`;
+}
+
+// Show the selected command while the execution request is in flight.
+function previewHarnessAction() {
+  const decision = state?.decision;
+  if (!decision || ["DONE", "BLOCKED"].includes(decision.choice)) return;
+  const action = state.page.actions.find((item) => item.id === decision.choice);
+  renderHarnessLog({
+    step: (state.harness_actions?.length || 0) + 1,
+    command: decision.operation,
+    action: action?.label || decision.choice,
+    text: null,
+    value: action?.value,
+    delta: action?.delta,
+    node: action?.node,
+    status: "sending",
+    sent_ms: state.elapsed_ms,
+  });
+}
+
+// Draw the latest browser, decision, and action history state.
 function render() {
   if (!state) return;
-  $("decision-model").textContent = state.decision_model;
+  if (state.page) $("model-screenshots").checked = Boolean(state.model_screenshots);
+  $("image-mode-status").textContent = state.model_screenshots
+    ? "Active · the current JPEG is attached to every Jev decision."
+    : "Off · available with Jev AI only.";
+  $("decision-model").textContent = state.decision_model || "Choose a decision model";
   $("helper").textContent = `Text helper · ${state.text_model}`;
   $("plan").innerHTML = (state.plan || [])
     .map(
@@ -78,10 +134,11 @@ function render() {
     idle: "Ready to test",
     ready: "Page observed · ready for a decision",
     predicted: "Choice ready · inspect or execute",
-    done: "Jev reports complete · inspect the page",
+    done: "Model reports complete · inspect the page",
     blocked: "Stopped · no supported next action",
   };
   $("status").textContent = labels[state.status] || state.status;
+  renderHarnessLog();
   if (!page) {
     controls();
     return;
@@ -107,7 +164,8 @@ function render() {
   $("latency").textContent = d ? `${d.latency_ms} ms` : "—";
   $("confidence").textContent = d?.target_confidence != null ? percent(d.target_confidence) : "—";
   $("completion").textContent = d ? d.operation : "—";
-  $("ranking-note").textContent = d ? "Ranked by Jev" : "Unranked";
+  const providerLabel = state.decision_provider === "openrouter" ? "Drex Max" : "Jev AI";
+  $("ranking-note").textContent = d ? `Ranked by ${providerLabel}` : "Unranked";
   const op = Object.entries(d?.operation_probabilities || {}).sort((a,b)=>b[1]-a[1]);
   $("operation-choices").innerHTML = op.map(([name,p]) =>
     `<span class="operation-choice ${name === d.operation ? 'best' : ''}">${escape(name)} <b>${percent(p)}</b></span>`).join('');
@@ -141,6 +199,9 @@ function render() {
       goal: state.goal,
       url: page.url,
       text: page.text,
+      image_input: state.model_screenshots
+        ? "Enabled; the JPEG will be attached when the next decision request is created."
+        : "Disabled",
       actions: page.actions.map(({ rect, node, ...rest }) => rest),
     },
     null,
@@ -153,16 +214,40 @@ $("task-form").addEventListener("submit", (event) => {
   automatic = false;
   perform(
     () =>
-      call("reset", { url: $("start-url").value, goal: $("goal").value }),
+      call("reset", {
+        url: $("start-url").value,
+        goal: $("goal").value,
+        decision_provider: $("decision-provider").value,
+        model_screenshots: $("model-screenshots").checked,
+        save_screenshots: $("save-screenshots").checked,
+      }),
     "Opening a fresh browser…",
   );
 });
+$("decision-provider").addEventListener("change", () => {
+  if ($("decision-provider").value !== "typesafe") {
+    $("model-screenshots").checked = false;
+    $("image-mode-status").textContent = "Off · available with Jev AI only.";
+  }
+  controls();
+});
+$("model-screenshots").addEventListener("change", () => {
+  $("image-mode-status").textContent = $("model-screenshots").checked
+    ? "Will activate on the next Jev decision."
+    : "Will turn off on the next Jev decision.";
+});
 $("choose").addEventListener("click", () =>
-  perform(() => call("predict"), "Jev is comparing the actions…"),
+  perform(
+    () => call("predict", { model_screenshots: $("model-screenshots").checked }),
+    "Decision model is comparing the actions…",
+  ),
 );
 $("execute").addEventListener("click", () =>
   perform(
-    () => call("act", { fingerprint: state.page.fingerprint }),
+    () => {
+      previewHarnessAction();
+      return call("act", { fingerprint: state.page.fingerprint });
+    },
     "Executing the choice…",
   ),
 );
@@ -173,12 +258,13 @@ $("auto").addEventListener("click", () =>
     for (let i = 0; i < state.max_steps * 2 && automatic; i++) {
       $("status").textContent = "Running…";
       if ($("pace").checked) {
-        await call("predict");
+        await call("predict", { model_screenshots: $("model-screenshots").checked });
         await new Promise(resolve => setTimeout(resolve, 450));
         if (!automatic) break;
+        previewHarnessAction();
         await call("act", {fingerprint: state.page.fingerprint});
       } else {
-        await call("tick");
+        await call("tick", { model_screenshots: $("model-screenshots").checked });
       }
       if (["done", "blocked"].includes(state.status)) break;
     }

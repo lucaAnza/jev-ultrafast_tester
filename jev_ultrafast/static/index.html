@@ -21,13 +21,21 @@
           <p class="eyebrow">END-TO-END TESTING · BUG HUNTING</p>
           <h1>Test a website through its real interface.</h1>
           <p>
-            Give Jev a starting URL and a testing goal. It explores the visible
+            Give the agent a starting URL and a testing goal. It explores the visible
             interface and records every action and observed result.
           </p>
         </div>
-        <div class="model-tag"><b id="decision-model">jev-latest</b> <span>+ text helper</span></div>
+        <div class="model-tag"><b id="decision-model">Choose a decision model</b> <span>+ text helper</span></div>
       </section>
       <form id="task-form">
+        <label class="task-field" for="decision-provider">
+          <span>Decision model</span>
+          <select id="decision-provider" name="decision_provider" required>
+            <option value="" selected disabled>Choose a decision model</option>
+            <option value="typesafe">Jev AI · TypeSafe</option>
+            <option value="openrouter">Drex Max · OpenRouter</option>
+          </select>
+        </label>
         <label class="task-field" for="start-url">
           <span>Website URL</span>
           <input
@@ -39,6 +47,22 @@
             required
           />
         </label>
+        <div class="screenshot-options" aria-label="Screenshot options">
+          <label>
+            <input id="model-screenshots" name="model_screenshots" type="checkbox" />
+            <span>
+              Send current view to Jev
+              <small id="image-mode-status">Off · available with Jev AI only.</small>
+            </span>
+          </label>
+          <label>
+            <input id="save-screenshots" name="save_screenshots" type="checkbox" />
+            <span>
+              Save each step screenshot
+              <small>Writes the initial view and every observed action result to logs.</small>
+            </span>
+          </label>
+        </div>
         <label class="task-field" for="goal"><span>Give it a task</span></label>
         <div class="task-row">
           <textarea
@@ -128,6 +152,14 @@
             Operation and target are separate choices in one request.<br />Text is generated only for TYPE_TEXT.
           </p>
         </aside>
+      </section>
+      <section class="trace harness-trace">
+        <div class="trace-heading">
+          <h2>Browser Harness steps <span id="harness-count">0 commands</span></h2>
+        </div>
+        <div id="harness-log" aria-live="polite">
+          <p class="muted">Commands appear here immediately before browser execution.</p>
+        </div>
       </section>
       <section class="trace">
         <div class="trace-heading">

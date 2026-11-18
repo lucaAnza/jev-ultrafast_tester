@@ -131,11 +131,36 @@ form {
   align-items: center;
   gap: 16px;
 }
+.screenshot-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 4px 0 16px;
+}
+.screenshot-options label {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  color: #4f514a;
+  font-size: 12px;
+}
+.screenshot-options input {
+  margin-top: 2px;
+  accent-color: var(--green);
+}
+.screenshot-options small {
+  display: block;
+  margin-top: 3px;
+  color: #8b8d84;
+  font-size: 10px;
+}
 input,
+select,
 button {
   font: inherit;
 }
 #start-url,
+#decision-provider,
 #goal {
   width: 100%;
   min-width: 0;
@@ -148,6 +173,7 @@ button {
   color: #343530;
 }
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid #2f8a60;
   outline-offset: 0;
@@ -467,6 +493,19 @@ aside {
 }
 .trace {
   padding: 26px 0 20px;
+}
+.harness-trace {
+  padding-bottom: 0;
+}
+.harness-row b {
+  font: 600 11px ui-monospace, monospace;
+  color: #3f654d;
+}
+.harness-row.sending {
+  opacity: 0.65;
+}
+.harness-row.sent .effect {
+  color: #a56832;
 }
 .trace-heading {
   display: flex;

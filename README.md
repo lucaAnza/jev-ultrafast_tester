@@ -8,7 +8,7 @@
 
 **An end-to-end website tester with a dynamic, indexed action space.**
 
-Enter a website URL and one testing goal. A System One decision model—[TypeSafe's Jev](https://docs.typesafe.ai/introduction) by default—picks an operation and an observed element. A small LLM writes text only when the operation is `TYPE_TEXT`, while the inspector records each action and its observed result.
+Enter a website URL and one testing goal, then choose a System One decision model. [TypeSafe's Jev](https://docs.typesafe.ai/introduction) or Drex Max through OpenRouter picks an operation and an observed element. A small LLM writes text only when the operation is `TYPE_TEXT`, while the inspector records each action and its observed result.
 
 [Read the loop](jev_ultrafast/agent.py) · [Historical measurements](docs/performance.md)
 
@@ -57,19 +57,20 @@ cp .env.example .env
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766**, enter the URL of the website to test, describe the end-to-end flow or bug hunt, and click **Start test → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, and executed actions. **Choose next** pauses before execution.
+Open **http://127.0.0.1:8766**, enter the URL of the website to test, describe the end-to-end flow or bug hunt, and click **Start test → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, executed actions, and a Browser Harness command trail. **Choose next** pauses before execution; **Execute choice** previews the command while it is in flight.
 
-Every **Start test** creates a separate `artifacts/jev-decisions-<timestamp>.log` file. Each Jev response is written immediately as `Decision N - <selected element>`, followed by its input/output token counts, cumulative counts, and structured JSON output. The same per-request token counts are printed in the server terminal.
+Both screenshot options are off by default. **Send current view to Jev** adds the current JPEG once to the shared TypeSafe state for every decision request, alongside the structured page and indexed elements. The setting is applied again before every prediction, so it can be changed during a run; the label confirms whether it is active. It uses TypeSafe's experimental [image request format](https://docs.typesafe.ai/images) and is available only with **Jev AI · TypeSafe**. **Save each step screenshot** stores the initial view and every observed action result in a separate `logs/jev-screenshots-<timestamp>/` directory; it can be enabled independently.
+
+Every **Start test** creates a separate `logs/jev-decisions-<timestamp>.log` file. The exact request is written immediately before it is sent, including image asset data when enabled, the provider URL, and non-secret feature headers. Authorization tokens are never logged. Each decision response follows as `Decision N - <selected element>`, with its input/output token counts, cumulative counts, and structured JSON output. The same per-request token counts are printed in the server terminal.
 
 Chrome connects through [Browser Harness](https://github.com/browser-use/browser-harness), installed by `uv sync`. Run `uv run browser-harness --doctor` if it needs connecting. Allow remote debugging in Chrome when prompted.
 
 `TEXT_MODEL_API_KEY` is an OpenRouter key in the example configuration. The sample configuration uses `google/gemma-4-31b-it:free` with reasoning disabled; `inception/mercury-2.5`, GLM, and DeepSeek can also use the OpenAI-compatible text helper when configured with the appropriate model and endpoint.
 
-The decision model defaults to TypeSafe Jev. To run Drex Max through OpenRouter's Decisions API instead, use:
+At the start of each test, choose **Jev AI · TypeSafe** or **Drex Max · OpenRouter** in the inspector. The choice selects the matching server-side model and endpoint; credentials remain in `.env`:
 
 ```dotenv
-DECISION_PROVIDER=openrouter
-DECISION_MODEL=nace-ai/drex-max
+TYPESAFE_API_KEY=your_typesafe_key
 OPENROUTER_API_KEY=your_openrouter_key
 ```
 
@@ -84,6 +85,7 @@ with Agent(
     "http://127.0.0.1:8000/",
     "Test the login flow end to end using clearly synthetic data. "
     "Stop when the authenticated page is visible or a functional bug blocks progress.",
+    model_screenshots=False,
 ) as agent:
     for state in agent.run():
         print(state["elapsed_ms"], state["status"])
@@ -100,7 +102,7 @@ uv run --env-file .env python examples/run.py \
 ## Why it moves
 
 - **One request per decision cycle.** Operation and target heads share the same observed state.
-- **No screenshots in the default agent loop.** Jev consumes structured state. The inspector opts into screenshots; the video uses a separate continuous screencast.
+- **No model screenshots by default.** Jev consumes structured state unless image mode is explicitly enabled. The inspector's live preview and optional saved step images remain separate concerns.
 - **One browser call per snapshot.** Read visible controls, their names, values, and text atomically. Keep references to the actual DOM nodes.
 - **Validate the selected target.** Clicks check the document, form values, target, and nearby context. Animation alone does not force another prediction. Resolve current geometry and reject covered controls before input.
 - **Wait for useful state.** After typing into a combobox, wait for visible suggestions, capped at 200 ms. Other interactions get at most two animation frames or 50 ms. These reads happen after execution is logged.
@@ -118,6 +120,8 @@ Every executed target is resolved from an observed node. The executor rechecks p
 | [snapshot.js](jev_ultrafast/snapshot.js) | Atomic DOM snapshot, indexed controls, freshness guards |
 | [browser.py](jev_ultrafast/browser.py) | Browser connection, current geometry, execution |
 | [model.py](jev_ultrafast/model.py) | Dynamic operation/target heads and text generation |
+| [config.py](jev_ultrafast/config.py) | Project configuration and `.env` loading |
+| [run_log.py](jev_ultrafast/run_log.py) | Model request and response logs |
 | [questions.py](jev_ultrafast/questions.py) | Model instructions |
 | [demo.py](jev_ultrafast/demo.py) | Local end-to-end test inspector |
 
