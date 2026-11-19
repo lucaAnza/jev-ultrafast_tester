@@ -96,43 +96,65 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self):
+        # Accept requests only for the expected local server.
         if self.headers.get("Host") != f"127.0.0.1:{PORT}":
             return self.send(403, "Forbidden", "text/plain")
+
+        # Get the requested path, excluding any query parameters (?x=...).
         path = urlparse(self.path).path
-        if path == "/api/state":
-            with LOCK:
-                return self.send(200, json.dumps(response_state()))
+
+        # List the interface files this server can serve.
         files = {
             "/": ("index.html", "text/html"),
             "/app.js": ("app.js", "text/javascript"),
             "/style.css": ("style.css", "text/css"),
         }
+
+        # Check whether the path is supported.
+        if path == "/api/state":
+            with LOCK:
+                return self.send(200, json.dumps(response_state()))
         if path not in files:
             return self.send(404, "Not found", "text/plain")
+
+        # Read the requested file and insert the token used by the interface.
         name, mime = files[path]
         content = (ROOT / "static" / name).read_text().replace("__TOKEN__", TOKEN)
         self.send(200, content, mime + "; charset=utf-8")
 
     def do_POST(self):
+        # Check that this request comes from the local interface.
         if (
             self.headers.get("Host") != f"127.0.0.1:{PORT}"
             or self.headers.get("X-Demo-Token") != TOKEN
             or self.headers.get("Origin") not in (None, ORIGIN)
         ):
             return self.send(403, json.dumps({"error": "Local demo requests only"}))
+
+        # Allow only one browser command to run at a time.
         if not LOCK.acquire(blocking=False):
             return self.send(409, json.dumps({"error": "A browser step is already running"}))
+
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length < 8192:
+            # Check the request size, then parse its JSON body.
+            body_length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < body_length < 8192:
                 raise ValueError("Invalid request size")
-            body = json.loads(self.rfile.read(length))
-            result = command(self.path.removeprefix("/api/"), body)
+
+            body = json.loads(self.rfile.read(body_length))
+
+            # Extract the command and execute it
+            command_name = self.path.removeprefix("/api/")
+            result = command(command_name, body)
             self.send(200, json.dumps(result))
+
+        # Return expected errors to the interface; hide unexpected details.
         except (ValueError, RuntimeError, TimeoutError) as error:
             self.send(400, json.dumps({"error": str(error)}))
         except Exception:
             self.send(500, json.dumps({"error": "Local test failed; no automatic retry. Reset to recover."}))
+
+        # Always release the lock, including when command handling fails.
         finally:
             LOCK.release()
 
