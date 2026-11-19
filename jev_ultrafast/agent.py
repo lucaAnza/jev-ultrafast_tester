@@ -22,6 +22,7 @@ class Agent:
         record_dir=None,
         screenshots=False,
         model_screenshots=False,
+        append_decision_log=False,
     ):
         """Open the test page and create the first observable state."""
         task = goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
@@ -68,7 +69,8 @@ class Agent:
         )
         if self.decision_log:
             self.decision_log.parent.mkdir(parents=True, exist_ok=True)
-            self.decision_log.write_text("", encoding="utf-8")
+            if not append_decision_log:
+                self.decision_log.write_text("", encoding="utf-8")
         if self.record_dir:
             self.record_dir.mkdir(parents=True, exist_ok=True)
             self._save_screenshot(page, 0)
@@ -183,9 +185,14 @@ class Agent:
                 on_request=lambda request: self.log_request(request, decision_number),
             )
             self.log_decision(state["decision"], state["page"], decision_number)
+            selected_action = next(
+                (action for action in state["page"]["actions"] if action["id"] == state["decision"]["choice"]),
+                None,
+            )
             state["decisions"].append(
                 {
                     **state["decision"],
+                    "action_label": selected_action["label"] if selected_action else state["decision"]["choice"],
                     "fingerprint": state["page"]["fingerprint"],
                     "elapsed_ms": round((time.perf_counter() - state["started_at"]) * 1000),
                 }

@@ -57,7 +57,7 @@ def start_url(value):
     return url
 
 
-def command(name, body):
+def command(name, body, *, decision_log=None, append_decision_log=False):
     """Create a run or forward one bounded command to the active agent."""
     global AGENT
     if name == "reset":
@@ -71,20 +71,23 @@ def command(name, body):
         run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         logs = PROJECT_ROOT / "logs"
         save_screenshots = body.get("save_screenshots") is True
+        decision_log = decision_log or logs / f"jev-decisions-{run_id}.log"
         AGENT = Agent(
             url,
             goal,
             decision_provider=provider,
-            decision_log=logs / f"jev-decisions-{run_id}.log",
+            decision_log=decision_log,
             screenshots=True,
             model_screenshots=body.get("model_screenshots") is True,
             record_dir=logs / f"jev-screenshots-{run_id}" if save_screenshots else None,
+            append_decision_log=append_decision_log,
         )
     else:
         if AGENT is None:
             raise ValueError("Start a test first")
         AGENT.command(name, body)
     state = response_state()
+    SUITE.update(state)
     SUITE.finish(state)
     return state
 
@@ -101,7 +104,11 @@ def suite_command(name, body):
             "model_screenshots": False,
             "save_screenshots": False,
         }
-        state = SUITE.load(url, body.get("suite"), options)
+        run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        log_path = PROJECT_ROOT / "logs" / f"jev-suite-{run_id}.log"
+        state = SUITE.load(url, body.get("suite"), options, log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(f"End-to-End Test Suite\nURL: {url}\n\n", encoding="utf-8")
         close_browser()
         return state
 
@@ -112,6 +119,9 @@ def suite_command(name, body):
 
     if name == "suite/start":
         test = SUITE.start(body.get("test_id"))
+        test_number = SUITE.index(test["id"])
+        with SUITE.log_path.open("a", encoding="utf-8") as log:
+            log.write(f"TEST_{test_number}\nID: {test['id']}\nDescription: {test['description']}\n\n")
         return command(
             "reset",
             {
@@ -119,6 +129,8 @@ def suite_command(name, body):
                 "goal": test["description"],
                 **SUITE.options,
             },
+            decision_log=SUITE.log_path,
+            append_decision_log=True,
         )
 
     if name == "suite/fail":

@@ -14,8 +14,9 @@ class TestSuite:
         self.options = {}
         self.tests = []
         self.active_id = None
+        self.log_path = None
 
-    def load(self, url, data, options):
+    def load(self, url, data, options, log_path):
         """Validate and store a new suite."""
         tests = validate_suite(data)
         self.url = url
@@ -26,11 +27,13 @@ class TestSuite:
                 "status": "pending",
                 "elapsed_ms": 0,
                 "actions": [],
+                "choices": [],
                 "error": None,
             }
             for test in tests
         ]
         self.active_id = None
+        self.log_path = log_path
         return self.snapshot()
 
     def start(self, test_id):
@@ -38,9 +41,25 @@ class TestSuite:
         test = self._find(test_id)
         if self.active_id:
             raise ValueError("Another suite test is already running")
-        test.update(status="running", elapsed_ms=0, actions=[], error=None)
+        test.update(status="running", elapsed_ms=0, actions=[], choices=[], error=None)
         self.active_id = test_id
         return test
+
+    def update(self, agent_state):
+        """Keep the active test's choices current while it runs."""
+        if not self.active_id:
+            return
+        test = self._find(self.active_id)
+        test["elapsed_ms"] = agent_state.get("elapsed_ms", 0)
+        test["choices"] = [
+            {
+                "step": index,
+                "operation": decision.get("operation"),
+                "target": decision.get("action_label", decision.get("choice")),
+                "elapsed_ms": decision.get("elapsed_ms", 0),
+            }
+            for index, decision in enumerate(agent_state.get("decisions", []), start=1)
+        ]
 
     def finish(self, agent_state):
         """Save a terminal agent result for the active test."""
@@ -68,9 +87,19 @@ class TestSuite:
             "configured": self.url is not None,
             "url": self.url,
             "options": dict(self.options),
-            "tests": [{**test, "actions": list(test["actions"])} for test in self.tests],
+            "tests": [
+                {**test, "actions": list(test["actions"]), "choices": list(test["choices"])} for test in self.tests
+            ],
             "active_id": self.active_id,
+            "log_file": self.log_path.name if self.log_path else None,
         }
+
+    def index(self, test_id):
+        """Return the stable zero-based position of one test."""
+        for index, test in enumerate(self.tests):
+            if test["id"] == test_id:
+                return index
+        raise ValueError("Test not found")
 
     def _find(self, test_id):
         if not isinstance(test_id, str):

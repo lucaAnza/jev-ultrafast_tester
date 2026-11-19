@@ -47,7 +47,7 @@ function renderSuite() {
 
   const completed = suite.tests.filter((test) => ["done", "blocked", "error"].includes(test.status)).length;
   $("suite-summary").textContent = `${suite.tests.length} tests · ${completed} completed`;
-  $("suite-target").textContent = suite.url;
+  $("suite-target").textContent = `${suite.url} · log: ${suite.log_file}`;
   $("test-all").disabled = Boolean(suite.active_id) || runningAll;
   $("suite-replace").disabled = Boolean(suite.active_id) || runningAll;
 
@@ -59,6 +59,16 @@ function renderSuite() {
             <div class="test-id">${escape(test.id)}</div>
             <h3>${escape(test.description)}</h3>
             ${test.error ? `<p class="test-error">${escape(test.error)}</p>` : ""}
+            ${test.choices.length ? `
+              <div class="live-choices" aria-live="polite">
+                ${test.choices.slice(-5).map((choice) => `
+                  <div class="live-choice">
+                    <span>${String(choice.step).padStart(2, "0")}</span>
+                    <b>${escape(choice.operation)}</b>
+                    <p>${escape(choice.target)}</p>
+                    <time>${choice.elapsed_ms} ms</time>
+                  </div>`).join("")}
+              </div>` : ""}
           </div>
           <div class="test-meta">
             ${statusBadge(test)}
@@ -89,6 +99,15 @@ async function runTest(testId) {
     for (let step = 0; step < agent.max_steps * 2; step += 1) {
       if (["done", "blocked"].includes(agent.status)) break;
       agent = await post("tick");
+      const currentTest = suite.tests.find((item) => item.id === testId);
+      currentTest.elapsed_ms = agent.elapsed_ms;
+      currentTest.choices = (agent.decisions || []).map((decision, index) => ({
+        step: index + 1,
+        operation: decision.operation,
+        target: decision.action_label || decision.choice,
+        elapsed_ms: decision.elapsed_ms,
+      }));
+      renderSuite();
     }
     if (!["done", "blocked"].includes(agent.status)) throw Error("The test reached its execution limit");
   } catch (error) {

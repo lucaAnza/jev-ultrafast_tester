@@ -57,7 +57,7 @@ cp .env.example .env
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766** and choose a testing mode. **Classic Jev Ultrafast** accepts one website URL and one goal, then exposes **Start test → Run automatically** along with the full inspector. **End-to-End Tester** accepts a website URL and a JSON file containing `tests`, where every test has a unique `id` and a natural-language `description`. It can run one test or the complete suite and keeps each result and Browser Harness action list in server memory.
+Open **http://127.0.0.1:8766** and choose a testing mode. **Classic Jev Ultrafast** accepts one website URL and one goal, then exposes **Start test → Run automatically** along with the full inspector. **End-to-End Tester** accepts a website URL and a JSON file containing `tests`, where every test has a unique `id` and a natural-language `description`. It can run one test or the complete suite, shows each choice while it runs, and keeps every result and Browser Harness action list in server memory. One `logs/jev-suite-<timestamp>.log` file contains all suite decisions under `TEST_0`, `TEST_1`, and subsequent headings.
 
 The classic inspector shows numbered elements, operation probabilities, target probabilities, executed actions, and a Browser Harness command trail. **Choose next** pauses before execution; **Execute choice** previews the command while it is in flight.
 
