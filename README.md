@@ -57,7 +57,9 @@ cp .env.example .env
 uv run jev
 ```
 
-Open **http://127.0.0.1:8766**, enter the URL of the website to test, describe the end-to-end flow or bug hunt, and click **Start test → Run automatically**. The inspector shows numbered elements, operation probabilities, target probabilities, executed actions, and a Browser Harness command trail. **Choose next** pauses before execution; **Execute choice** previews the command while it is in flight.
+Open **http://127.0.0.1:8766** and choose a testing mode. **Classic Jev Ultrafast** accepts one website URL and one goal, then exposes **Start test → Run automatically** along with the full inspector. **End-to-End Tester** accepts a website URL and a JSON file containing `tests`, where every test has a unique `id` and a natural-language `description`. It can run one test or the complete suite and keeps each result and Browser Harness action list in server memory.
+
+The classic inspector shows numbered elements, operation probabilities, target probabilities, executed actions, and a Browser Harness command trail. **Choose next** pauses before execution; **Execute choice** previews the command while it is in flight.
 
 Both screenshot options are off by default. **Send current view to Jev** adds the current JPEG once to the shared TypeSafe state for every decision request, alongside the structured page and indexed elements. The setting is applied again before every prediction, so it can be changed during a run; the label confirms whether it is active. It uses TypeSafe's experimental [image request format](https://docs.typesafe.ai/images) and is available only with **Jev AI · TypeSafe**. **Save each step screenshot** stores the initial view and every observed action result in a separate `logs/jev-screenshots-<timestamp>/` directory; it can be enabled independently.
 
@@ -124,6 +126,7 @@ Every executed target is resolved from an observed node. The executor rechecks p
 | [run_log.py](jev_ultrafast/run_log.py) | Model request and response logs |
 | [questions.py](jev_ultrafast/questions.py) | Model instructions |
 | [demo.py](jev_ultrafast/demo.py) | Local end-to-end test inspector |
+| [test_suite.py](jev_ultrafast/test_suite.py) | JSON suite validation and in-memory test results |
 
 ## Evidence and limits
 

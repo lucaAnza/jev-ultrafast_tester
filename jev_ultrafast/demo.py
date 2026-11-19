@@ -11,8 +11,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .agent import Agent
-from .utils.config import PROJECT_ROOT, load_environment
 from .questions import MAX_STEPS
+from .test_suite import TestSuite
+from .utils.config import PROJECT_ROOT, load_environment
 
 ROOT = Path(__file__).parent
 PORT = int(os.environ.get("TYPESAFE_DEMO_PORT", "8766"))
@@ -20,6 +21,7 @@ ORIGIN = f"http://127.0.0.1:{PORT}"
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 AGENT = None
+SUITE = TestSuite()
 
 
 def response_state():
@@ -31,6 +33,11 @@ def response_state():
         "text_model": os.environ.get("TEXT_MODEL", "deepseek-chat"),
         "max_steps": MAX_STEPS,
     }
+
+
+def suite_state():
+    """Return the current end-to-end suite state."""
+    return SUITE.snapshot()
 
 
 def close_browser():
@@ -77,7 +84,48 @@ def command(name, body):
         if AGENT is None:
             raise ValueError("Start a test first")
         AGENT.command(name, body)
-    return response_state()
+    state = response_state()
+    SUITE.finish(state)
+    return state
+
+
+def suite_command(name, body):
+    """Load a suite, start one test, or record an execution error."""
+    if name == "suite/load":
+        url = start_url(body.get("url", ""))
+        provider = body.get("decision_provider", "")
+        if provider not in {"typesafe", "openrouter"}:
+            raise ValueError("Choose a decision model")
+        options = {
+            "decision_provider": provider,
+            "model_screenshots": False,
+            "save_screenshots": False,
+        }
+        state = SUITE.load(url, body.get("suite"), options)
+        close_browser()
+        return state
+
+    if name == "suite/clear":
+        close_browser()
+        SUITE.clear()
+        return suite_state()
+
+    if name == "suite/start":
+        test = SUITE.start(body.get("test_id"))
+        return command(
+            "reset",
+            {
+                "url": SUITE.url,
+                "goal": test["description"],
+                **SUITE.options,
+            },
+        )
+
+    if name == "suite/fail":
+        SUITE.fail(body.get("test_id"), body.get("error", "Test execution failed"))
+        return suite_state()
+
+    return command(name, body)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -105,8 +153,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # List the interface files this server can serve.
         files = {
-            "/": ("index.html", "text/html"),
+            "/": ("home.html", "text/html"),
+            "/classic": ("index.html", "text/html"),
+            "/suite": ("suite.html", "text/html"),
             "/app.js": ("app.js", "text/javascript"),
+            "/suite.js": ("suite.js", "text/javascript"),
             "/style.css": ("style.css", "text/css"),
         }
 
@@ -114,6 +165,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             with LOCK:
                 return self.send(200, json.dumps(response_state()))
+        if path == "/api/suite":
+            with LOCK:
+                return self.send(200, json.dumps(suite_state()))
         if path not in files:
             return self.send(404, "Not found", "text/plain")
 
@@ -138,14 +192,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             # Check the request size, then parse its JSON body.
             body_length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < body_length < 8192:
+            if not 0 < body_length < 262144:
                 raise ValueError("Invalid request size")
 
             body = json.loads(self.rfile.read(body_length))
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
 
-            # Extract the command and execute it
-            command_name = self.path.removeprefix("/api/")
-            result = command(command_name, body)
+            # Extract the command and execute it.
+            command_name = urlparse(self.path).path.removeprefix("/api/")
+            result = suite_command(command_name, body)
             self.send(200, json.dumps(result))
 
         # Return expected errors to the interface; hide unexpected details.

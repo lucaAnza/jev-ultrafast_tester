@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="demo-token" content="__TOKEN__" />
+    <title>Jev Ultrafast · End-to-End Tester</title>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <a href="/" aria-label="Homepage" class="brand">browser<span>use</span> <i>×</i> System One</a>
+      <a class="local" href="/">← Testing modes</a>
+    </header>
+    <main class="suite-page">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">END-TO-END TEST SUITE</p>
+          <h1>Run a list of tests through the real interface.</h1>
+          <p>Upload a valid JSON file, then run each test separately or execute the complete suite.</p>
+        </div>
+      </section>
+
+      <section id="suite-setup">
+        <form id="suite-form" class="suite-form">
+          <label class="task-field" for="suite-provider">
+            <span>Decision model</span>
+            <select id="suite-provider" required>
+              <option value="typesafe">Jev AI · TypeSafe</option>
+              <option value="openrouter">Drex Max · OpenRouter</option>
+            </select>
+          </label>
+          <label class="task-field" for="suite-url">
+            <span>Website URL</span>
+            <input id="suite-url" type="url" placeholder="https://example.com" autocomplete="url" required />
+          </label>
+          <label class="upload-field" for="suite-file">
+            <span>Test suite JSON</span>
+            <input id="suite-file" type="file" accept="application/json,.json" required />
+            <small>Each test must contain a unique <code>id</code> and a non-empty <code>description</code>.</small>
+          </label>
+          <button class="primary" type="submit" id="suite-load">Validate and load suite</button>
+        </form>
+        <details class="format-example">
+          <summary>Expected JSON format</summary>
+          <pre>{
+  "tests": [
+    {
+      "id": "test_001",
+      "description": "Verify that clicking a navigation link opens the correct page"
+    }
+  ]
+}</pre>
+        </details>
+      </section>
+
+      <section id="suite-results" hidden>
+        <div class="suite-toolbar">
+          <div>
+            <p class="eyebrow">LOADED SUITE</p>
+            <h2 id="suite-summary">0 tests</h2>
+            <p id="suite-target" class="muted"></p>
+          </div>
+          <div class="suite-toolbar-actions">
+            <button type="button" id="suite-replace">Load another file</button>
+            <button type="button" id="test-all" class="primary">Test all</button>
+          </div>
+        </div>
+        <div id="suite-error" role="alert" hidden></div>
+        <div id="test-list" class="test-list"></div>
+      </section>
+    </main>
+
+    <dialog id="actions-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">EXECUTED ACTIONS</p>
+          <h2 id="actions-title">Test actions</h2>
+        </div>
+        <button type="button" id="actions-close" aria-label="Close">Close</button>
+      </div>
+      <div id="actions-list"></div>
+    </dialog>
+    <script type="module" src="/suite.js"></script>
+  </body>
+</html>
